@@ -9,12 +9,12 @@ const strings = @import("./strings.zig");
 /// Asserts the type of a given value is valid.
 pub fn assert_valid_value_type(comptime T: type) void {
     comptime {
-        if (T == []const u8 or T == [:0]const u8 or @typeInfo(T) == .Int) {
+        if (T == []const u8 or T == [:0]const u8 or @typeInfo(T) == .int) {
             return;
         }
 
-        if (@typeInfo(T) == .Enum) {
-            const info = @typeInfo(T).Enum;
+        if (@typeInfo(T) == .@"enum") {
+            const info = @typeInfo(T).@"enum";
             assert(info.is_exhaustive);
             assert(info.fields.len >= 2);
             return;
@@ -102,13 +102,13 @@ pub fn parse_value(comptime T: type, arg_name: []const u8, arg_value: []const u8
     assert(arg_value.len > 0);
 
     const V = switch (@typeInfo(T)) {
-        .Optional => |optional| optional.child,
+        .optional => |optional| optional.child,
         else => T,
     };
 
     if (V == []const u8 or V == [:0]const u8) return arg_value;
-    if (@typeInfo(V) == .Int) return parse_value_int(V, arg_name, arg_value);
-    if (@typeInfo(V) == .Enum) return parse_value_enum(V, arg_name, arg_value);
+    if (@typeInfo(V) == .int) return parse_value_int(V, arg_name, arg_value);
+    if (@typeInfo(V) == .@"enum") return parse_value_enum(V, arg_name, arg_value);
     comptime unreachable;
 }
 
@@ -123,7 +123,7 @@ fn parse_value_int(comptime T: type, arg_name: []const u8, val: []const u8) T {
         switch (err) {
             error.Overflow => fatal(
                 "{s}: value exceeds {d}-bit {s} integer: '{s}'",
-                .{ arg_name, @typeInfo(T).Int.bits, @tagName(@typeInfo(T).Int.signedness), val },
+                .{ arg_name, @typeInfo(T).int.bits, @tagName(@typeInfo(T).int.signedness), val },
             ),
             error.InvalidCharacter => fatal(
                 "{s}: expected an integer value, but found '{s}' (invalid digit)",
@@ -151,7 +151,7 @@ test parse_value_int {
 /// assert(parse_value_enum(E, "test-enum", "not_ok"), .not_ok);
 /// ```
 fn parse_value_enum(comptime E: type, arg_name: []const u8, val: []const u8) E {
-    comptime assert(@typeInfo(E).Enum.is_exhaustive);
+    comptime assert(@typeInfo(E).@"enum".is_exhaustive);
 
     return std.meta.stringToEnum(E, val) orelse fatal(
         "{s}: expected one of {s}, but found '{s}'",

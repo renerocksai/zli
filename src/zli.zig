@@ -114,14 +114,14 @@ pub fn parse(args: *ArgIterator, comptime CLIArgs: type) CLIArgs {
     assert(args.skip()); // Discard executable name.
 
     return switch (@typeInfo(CLIArgs)) {
-        .Union => parse_commands(args, CLIArgs),
-        .Struct => parse_args(args, CLIArgs),
+        .@"union" => parse_commands(args, CLIArgs),
+        .@"struct" => parse_args(args, CLIArgs),
         else => unreachable,
     };
 }
 
 fn parse_commands(args: *ArgIterator, comptime Commands: type) Commands {
-    comptime assert(@typeInfo(Commands) == .Union);
+    comptime assert(@typeInfo(Commands) == .@"union");
     comptime assert(std.meta.fields(Commands).len > 1);
 
     const command = args.next() orelse fatal(
@@ -154,7 +154,7 @@ fn parse_args(args: *ArgIterator, comptime Args: type) Args {
         return {};
     }
 
-    comptime assert(@typeInfo(Args) == .Struct);
+    comptime assert(@typeInfo(Args) == .@"struct");
 
     comptime var fields: [std.meta.fields(Args).len]StructField = undefined;
     comptime var field_count = 0;
@@ -163,7 +163,7 @@ fn parse_args(args: *ArgIterator, comptime Args: type) Args {
 
     comptime for (std.meta.fields(Args)) |field| {
         if (strings.eql(field.name, "positional")) {
-            assert(@typeInfo(field.type) == .Struct);
+            assert(@typeInfo(field.type) == .@"struct");
 
             positional_fields = std.meta.fields(field.type);
 
@@ -173,10 +173,10 @@ fn parse_args(args: *ArgIterator, comptime Args: type) Args {
             }
         } else {
             switch (@typeInfo(field.type)) {
-                .Bool => {
+                .bool => {
                     assert(structs.default_value(field).? == false); // boolean flags should have a default
                 },
-                .Optional => |optional| {
+                .optional => |optional| {
                     assert(structs.default_value(field).? == null); // optional flags should have a default
                     argx.assert_valid_value_type(optional.child);
                 },
