@@ -46,7 +46,10 @@ pub fn main() !void {
             verbose: bool = false,
             positional: struct {
                 p1: []const u8,
-                p2: []const u8,
+                // optional, with default value
+                p2: []const u8 = "hello",
+                // optional, with default null
+                p3: ?[]const u8 = null,
             },
 
             pub const aliases = .{
@@ -95,6 +98,7 @@ pub fn main() !void {
             try writer.print("\tVerbose: {}\n", .{values.verbose});
             try writer.print("\tPos 1: {s}\n", .{values.positional.p1});
             try writer.print("\tPos 2: {s}\n", .{values.positional.p2});
+            try writer.print("\tPos 3: {?s}\n", .{values.positional.p3});
         },
         .required => |values| {
             try writer.print("Required:\n", .{});

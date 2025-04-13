@@ -168,8 +168,13 @@ fn parse_args(args: *ArgIterator, comptime Args: type) Args {
             positional_fields = std.meta.fields(field.type);
 
             for (positional_fields) |positional_field| {
-                assert(structs.default_value(positional_field) == null);
-                argx.assert_valid_value_type(positional_field.type);
+                switch (@typeInfo(positional_field.type)) {
+                    .optional => |optional| {
+                        // if no default: will be required
+                        argx.assert_valid_value_type(optional.child);
+                    },
+                    else => argx.assert_valid_value_type(positional_field.type),
+                }
             }
         } else {
             switch (@typeInfo(field.type)) {
@@ -274,8 +279,13 @@ fn parse_args(args: *ArgIterator, comptime Args: type) Args {
     if (@hasField(Args, "positional")) {
         assert(counts.positional <= positional_fields.len);
         inline for (positional_fields, 0..) |field, idx| {
-            if (counts.positional == idx) {
-                fatal("{s}: argument is required", .{field.name});
+            if (idx >= counts.positional) {
+                if (positional_fields[idx].default_value_ptr) |_| {
+                    // fill with default
+                    @field(result.positional, positional_fields[idx].name) = positional_fields[idx].defaultValue() orelse null;
+                } else {
+                    fatal("{s}: argument is required", .{field.name});
+                }
             }
         }
     }
