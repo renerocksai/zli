@@ -58,28 +58,12 @@ fantastic projects from the Zig community:
 
 ## Installing
 
-Requires [zig v0.12.x](https://ziglang.org).
-1.  Initialize your project repository:
-    ```bash
-    git init
-    ```
-2.  Create a `libs` directory inside the root of your project:
-    ```bash
-    mkdir libs
-    ```
-3.  Add this library as a submodule of your project:
-    ```bash
-    git submodule add https://github.com/TSxo/zli libs/zli
-    ```
-4.  Inside your `build.zig`, bring in the `zli` module and add it as an import
+Requires [zig v0.14.x](https://ziglang.org).
+1.  `zig fetch --save "git+https://github.com/TSxo/zil#v0.1.1"`
+2.  Inside your `build.zig`, bring in the `zli` module and add it as an import
     to your exe:
     ```zig
-    const module = b.addModule("zli", .{
-        .root_source_file = .{
-            .path = "libs/zli/src/zli.zig",
-        },
-    });
-
+    // Your typical exe
     const exe = b.addExecutable(.{
         .name = "project",
         .root_source_file = b.path("src/main.zig"),
@@ -87,9 +71,14 @@ Requires [zig v0.12.x](https://ziglang.org).
         .optimize = optimize,
     });
 
-    exe.root_module.addImport("zli", module);
+    // Now, add zli to the exe
+    const zli = b.dependency("zli", .{
+        .target = target,
+        .optimize = optimize,
+    });
+    exe.root_module.addImport("zli", zli.module("zli"));
     ```
-5.  `zli` is now usable in your project:
+3.  `zli` is now usable in your project:
     ```zig
     const zli = @import("zli");
     ```
