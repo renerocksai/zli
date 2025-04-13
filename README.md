@@ -59,7 +59,7 @@ fantastic projects from the Zig community:
 ## Installing
 
 Requires [zig v0.14.x](https://ziglang.org).
-1.  `zig fetch --save "git+https://github.com/TSxo/zil#v0.1.1"`
+1.  `zig fetch --save "git+https://github.com/renerocksai/zil#v0.1.1"`
 2.  Inside your `build.zig`, bring in the `zli` module and add it as an import
     to your exe:
     ```zig
