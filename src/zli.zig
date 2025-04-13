@@ -174,10 +174,10 @@ fn parse_args(args: *ArgIterator, comptime Args: type) Args {
         } else {
             switch (@typeInfo(field.type)) {
                 .bool => {
-                    assert(structs.default_value(field).? == false); // boolean flags should have a default
+                    assert(structs.default_value(field).? == false); // boolean flags should have a default of false
                 },
                 .optional => |optional| {
-                    assert(structs.default_value(field).? == null); // optional flags should have a default
+                    assert(structs.default_value(field).? == null); // optional flags should have a default of null
                     argx.assert_valid_value_type(optional.child);
                 },
                 else => {

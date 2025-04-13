@@ -33,14 +33,13 @@ pub fn assert_valid_value_type(comptime T: type) void {
 /// assert(std.mem.eql(name("-v"), "v"));
 /// ```
 pub fn name(arg: []const u8) []const u8 {
-    assert(arg.len > 1);
-    assert(arg[0] == '-');
+    if (arg.len <= 1) return "";
+    if (arg[0] != '-') return "";
 
     var from: usize = 1;
     var to: usize = arg.len;
 
-    if (arg[1] == '-') {
-        assert(arg.len > 2);
+    if (arg.len > 2 and arg[1] == '-') {
         from = 2;
     }
 
@@ -66,9 +65,12 @@ test name {
 /// assert(std.mem.eql(unparsed_value("-n=5"), "5"));
 /// ```
 fn unparsed_value(arg: []const u8) []const u8 {
-    const split_at = strings.index_of(arg, "=").? + 1;
-    assert(arg.len > split_at);
-    return arg[split_at..];
+    if (strings.index_of(arg, "=")) |pos_of_equ| {
+        const split_at = pos_of_equ + 1;
+        if (arg.len > split_at)
+            return arg[split_at..];
+    }
+    return "";
 }
 
 test unparsed_value {
@@ -86,7 +88,9 @@ test unparsed_value {
 pub fn parse_arg(comptime T: type, arg: []const u8) T {
     const arg_name = name(arg);
     const val = unparsed_value(arg);
-    assert(val.len > 0);
+    if (val.len == 0) {
+        fatal("Could not parse argument `{s}`: value length is 0. Did you forget the `=`? (like: `-{s}=`)", .{ arg_name, arg_name });
+    }
     return parse_value(T, arg_name, val);
 }
 
@@ -99,7 +103,12 @@ pub fn parse_arg(comptime T: type, arg: []const u8) T {
 /// ```
 pub fn parse_value(comptime T: type, arg_name: []const u8, arg_value: []const u8) T {
     if (T == bool) return true;
-    assert(arg_value.len > 0);
+
+    // this error is usually handled in parse_arg() already but checking for it
+    // here doesn't harm.
+    if (arg_value.len == 0) {
+        fatal("Value for argument `{s}` has zero length!", .{arg_name});
+    }
 
     const V = switch (@typeInfo(T)) {
         .optional => |optional| optional.child,
