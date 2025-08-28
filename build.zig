@@ -9,9 +9,11 @@ pub fn build(b: *std.Build) void {
     });
 
     const main_tests = b.addTest(.{
-        .root_source_file = b.path("src/test.zig"),
-        .optimize = optimize,
-        .target = target,
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("src/test.zig"),
+            .optimize = optimize,
+            .target = target,
+        }),
     });
 
     const test_step = b.step("test", "Run library tests");
@@ -22,9 +24,11 @@ pub fn build(b: *std.Build) void {
     inline for (.{ "subcommands", "args", "simple" }) |name| {
         const example = b.addExecutable(.{
             .name = name,
-            .root_source_file = b.path(b.fmt("example/{s}.zig", .{name})),
-            .target = target,
-            .optimize = optimize,
+            .root_module = b.createModule(.{
+                .root_source_file = b.path(b.fmt("example/{s}.zig", .{name})),
+                .target = target,
+                .optimize = optimize,
+            }),
         });
         const install_example = b.addInstallArtifact(example, .{});
         example.root_module.addImport("zli", module);

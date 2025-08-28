@@ -43,9 +43,13 @@ pub fn main() !void {
     };
 
     const result = zli.parse(&args, App);
-    const writer = std.io.getStdOut().writer();
+
+    var stdout_buffer: [1024]u8 = undefined;
+    var stdout_writer = std.fs.File.stdout().writer(&stdout_buffer);
+    const writer = &stdout_writer.interface;
 
     try writer.print("Port: {s}\n", .{result.port});
     try writer.print("Log Level: {s}\n", .{@tagName(result.log_level)});
     try writer.print("DB URI: {s}\n", .{result.db_uri});
+    try writer.flush();
 }

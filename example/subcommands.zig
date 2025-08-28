@@ -1,6 +1,8 @@
 const std = @import("std");
 const assert = std.debug.assert;
-const writer = std.io.getStdOut().writer();
+var stdout_buffer: [1024]u8 = undefined;
+var stdout_writer = std.fs.File.stdout().writer(&stdout_buffer);
+const writer = &stdout_writer.interface;
 
 const zli = @import("zli");
 
@@ -157,21 +159,25 @@ fn view(values: View) !void {
     try writer.print("View", .{});
     try writer.print("\tPath: {s}\n", .{values.data_path});
     try writer.print("\tNumber: {d}\n", .{values.number});
+    try writer.flush();
 }
 
 fn view_all(values: ViewAll) !void {
     try writer.print("View All", .{});
     try writer.print("\tPath: {s}\n", .{values.data_path});
+    try writer.flush();
 }
 
 fn add(values: Add) !void {
     try writer.print("Add Command:\n", .{});
     try writer.print("\tPath: {s}\n", .{values.data_path});
     try writer.print("\tPositional: {s}\n", .{values.positional.item});
+    try writer.flush();
 }
 
 fn delete(values: Delete) !void {
     try writer.print("Delete Command:\n", .{});
     try writer.print("\tPath: {s}\n", .{values.data_path});
     try writer.print("\tPositional: {s}\n", .{values.positional.item});
+    try writer.flush();
 }

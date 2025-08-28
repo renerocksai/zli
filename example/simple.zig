@@ -82,7 +82,10 @@ pub fn main() !void {
     };
 
     const result = zli.parse(&args, App);
-    const writer = std.io.getStdOut().writer();
+
+    var stdout_buffer: [1024]u8 = undefined;
+    var stdout_writer = std.fs.File.stdout().writer(&stdout_buffer);
+    const writer = &stdout_writer.interface;
 
     switch (result) {
         .empty => try writer.print("Running command with no args", .{}),
@@ -114,4 +117,5 @@ pub fn main() !void {
             try writer.print("\tEnum: {s}\n", .{@tagName(values.choice)});
         },
     }
+    try writer.flush();
 }
