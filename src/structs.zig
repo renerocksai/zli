@@ -25,22 +25,19 @@ pub fn struct_field_struct(comptime S: type, comptime Data: type, comptime defau
     assert(@typeInfo(S) == .@"struct");
 
     const fields_in = @typeInfo(S).@"struct".fields;
-    var fields_out: [fields_in.len]StructField = undefined;
+    var names: [fields_in.len][:0]const u8 = undefined;
+    var types: [fields_in.len]type = undefined;
+    var attrs: [fields_in.len]StructField.Attributes = undefined;
 
-    for (&fields_out, fields_in) |*field_out, field_in| {
-        field_out.* = .{
-            .name = field_in.name,
-            .type = Data,
+    for (fields_in, 0..) |field_in, i| {
+        names[i] = field_in.name;
+        types[i] = Data;
+        attrs[i] = .{
             .default_value_ptr = if (default) |d| @as(?*const anyopaque, @ptrCast(&d)) else null,
-            .is_comptime = false,
-            .alignment = if (@sizeOf(Data) > 0) @alignOf(Data) else 0,
+            .@"comptime" = false,
+            .@"align" = if (@sizeOf(Data) > 0) @alignOf(Data) else null,
         };
     }
 
-    return @Type(.{ .@"struct" = .{
-        .layout = .auto,
-        .fields = &fields_out,
-        .decls = &.{},
-        .is_tuple = false,
-    } });
+    return @Struct(.auto, null, &names, &types, &attrs);
 }

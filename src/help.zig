@@ -27,11 +27,12 @@ test requested_help {
 /// If a container contains a help message, will print.
 pub fn try_print_help(comptime T: type) void {
     if (@hasDecl(T, "help")) {
+        const io = std.Io.Threaded.global_single_threaded.io();
         var stdout_buffer: [1024]u8 = undefined;
-        var stdout_writer = std.fs.File.stdout().writer(&stdout_buffer);
+        var stdout_writer = std.Io.File.stdout().writer(io, &stdout_buffer);
         const writer = &stdout_writer.interface;
-        writer.writeAll(T.help) catch std.posix.exit(1);
-        writer.flush() catch std.posix.exit(1);
-        std.posix.exit(0);
+        writer.writeAll(T.help) catch std.process.exit(1);
+        writer.flush() catch std.process.exit(1);
+        std.process.exit(0);
     }
 }

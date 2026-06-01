@@ -50,7 +50,7 @@
 //! please use with this in mind.
 
 const std = @import("std");
-const ArgIterator = std.process.ArgIterator;
+const ArgIterator = std.process.Args.Iterator;
 const StructField = std.builtin.Type.StructField;
 const UnionField = std.builtin.Type.UnionField;
 const assert = std.debug.assert;
