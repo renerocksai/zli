@@ -2,14 +2,10 @@ const std = @import("std");
 const assert = std.debug.assert;
 const zli = @import("zli");
 
-pub fn main() !void {
-    var gpa = std.heap.GeneralPurposeAllocator(.{}){};
-    defer assert(gpa.deinit() == .ok);
+pub fn main(init: std.process.Init) !void {
+    const io = init.io;
 
-    const allocator = gpa.allocator();
-
-    var args = try std.process.argsWithAllocator(allocator);
-    defer args.deinit();
+    var args: std.process.Args.Iterator = .init(init.minimal.args);
 
     const App = union(enum) {
         empty,
@@ -81,10 +77,10 @@ pub fn main() !void {
         ;
     };
 
-    const result = zli.parse(&args, App);
+    const result = zli.parse(io, &args, App);
 
     var stdout_buffer: [1024]u8 = undefined;
-    var stdout_writer = std.fs.File.stdout().writer(&stdout_buffer);
+    var stdout_writer = std.Io.File.stdout().writer(io, &stdout_buffer);
     const writer = &stdout_writer.interface;
 
     switch (result) {

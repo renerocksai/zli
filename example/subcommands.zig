@@ -1,10 +1,7 @@
 const std = @import("std");
-const assert = std.debug.assert;
-var stdout_buffer: [1024]u8 = undefined;
-var stdout_writer = std.fs.File.stdout().writer(&stdout_buffer);
-const writer = &stdout_writer.interface;
-
 const zli = @import("zli");
+
+const Writer = std.Io.Writer;
 
 const View = struct {
     number: usize = 5,
@@ -128,54 +125,54 @@ const App = union(enum) {
     ;
 };
 
-pub fn main() !void {
-    var gpa = std.heap.GeneralPurposeAllocator(.{}){};
-    defer assert(gpa.deinit() == .ok);
+pub fn main(init: std.process.Init) !void {
+    const io = init.io;
 
-    const allocator = gpa.allocator();
+    var args: std.process.Args.Iterator = .init(init.minimal.args);
 
-    var args = try std.process.argsWithAllocator(allocator);
-    defer args.deinit();
+    var stdout_buffer: [1024]u8 = undefined;
+    var stdout_writer = std.Io.File.stdout().writer(io, &stdout_buffer);
+    const writer = &stdout_writer.interface;
 
-    const result = zli.parse(&args, App);
+    const result = zli.parse(io, &args, App);
 
     switch (result) {
         .view => |values| {
-            try view(values);
+            try view(writer, values);
         },
         .view_all => |values| {
-            try view_all(values);
+            try view_all(writer, values);
         },
         .add => |values| {
-            try add(values);
+            try add(writer, values);
         },
         .delete => |values| {
-            try delete(values);
+            try delete(writer, values);
         },
     }
 }
 
-fn view(values: View) !void {
+fn view(writer: *Writer, values: View) !void {
     try writer.print("View", .{});
     try writer.print("\tPath: {s}\n", .{values.data_path});
     try writer.print("\tNumber: {d}\n", .{values.number});
     try writer.flush();
 }
 
-fn view_all(values: ViewAll) !void {
+fn view_all(writer: *Writer, values: ViewAll) !void {
     try writer.print("View All", .{});
     try writer.print("\tPath: {s}\n", .{values.data_path});
     try writer.flush();
 }
 
-fn add(values: Add) !void {
+fn add(writer: *Writer, values: Add) !void {
     try writer.print("Add Command:\n", .{});
     try writer.print("\tPath: {s}\n", .{values.data_path});
     try writer.print("\tPositional: {s}\n", .{values.positional.item});
     try writer.flush();
 }
 
-fn delete(values: Delete) !void {
+fn delete(writer: *Writer, values: Delete) !void {
     try writer.print("Delete Command:\n", .{});
     try writer.print("\tPath: {s}\n", .{values.data_path});
     try writer.print("\tPositional: {s}\n", .{values.positional.item});

@@ -110,46 +110,47 @@ const help = @import("./help.zig");
 ///     ;
 /// };
 /// ```
-pub fn parse(args: *ArgIterator, comptime CLIArgs: type) CLIArgs {
+pub fn parse(io: std.Io, args: *ArgIterator, comptime CLIArgs: type) CLIArgs {
     assert(args.skip()); // Discard executable name.
 
     return switch (@typeInfo(CLIArgs)) {
-        .@"union" => parse_commands(args, CLIArgs),
-        .@"struct" => parse_args(args, CLIArgs),
+        .@"union" => parse_commands(io, args, CLIArgs),
+        .@"struct" => parse_args(io, args, CLIArgs),
         else => unreachable,
     };
 }
 
-fn parse_commands(args: *ArgIterator, comptime Commands: type) Commands {
+fn parse_commands(io: std.Io, args: *ArgIterator, comptime Commands: type) Commands {
     comptime assert(@typeInfo(Commands) == .@"union");
     comptime assert(std.meta.fields(Commands).len > 1);
 
     const command = args.next() orelse fatal(
+        io,
         "subcommand required: expected {s}",
         .{comptime strings.fields_to_string(Commands)},
     );
 
     if (help.requested_help(command)) {
-        help.try_print_help(Commands);
+        help.try_print_help(io, Commands);
     }
 
     inline for (comptime std.meta.fields(Commands)) |field| {
         const parsed_field = comptime strings.replace(field.name, "_", "-");
         if (strings.eql(command, parsed_field)) {
-            return @unionInit(Commands, field.name, parse_args(args, field.type));
+            return @unionInit(Commands, field.name, parse_args(io, args, field.type));
         }
     }
 
-    fatal("Invalid subcommand: \"{s}\". Expected: {s}.", .{
+    fatal(io, "Invalid subcommand: \"{s}\". Expected: {s}.", .{
         command,
         comptime strings.fields_to_string(Commands),
     });
 }
 
-fn parse_args(args: *ArgIterator, comptime Args: type) Args {
+fn parse_args(io: std.Io, args: *ArgIterator, comptime Args: type) Args {
     if (Args == void) {
         if (args.next()) |arg| {
-            fatal("unexpected argument: '{s}'", .{arg});
+            fatal(io, "unexpected argument: '{s}'", .{arg});
         }
         return {};
     }
@@ -201,18 +202,18 @@ fn parse_args(args: *ArgIterator, comptime Args: type) Args {
 
     next_arg: while (args.next()) |arg| {
         if (help.requested_help(arg)) {
-            help.try_print_help(Args);
+            help.try_print_help(io, Args);
         }
 
         const is_positional = if (arg[0] == '-') false else true;
         if (is_positional and @hasField(Args, "positional")) {
             if (parsed_positional) {
-                fatal("Unknown positional argument: {s}", .{arg});
+                fatal(io, "Unknown positional argument: {s}", .{arg});
             }
 
             inline for (positional_fields, 0..) |field, idx| {
                 if (counts.positional == idx) {
-                    @field(result.positional, field.name) = argx.parse_value(field.type, field.name, arg);
+                    @field(result.positional, field.name) = argx.parse_value(io, field.type, field.name, arg);
 
                     counts.positional += 1;
 
@@ -235,7 +236,7 @@ fn parse_args(args: *ArgIterator, comptime Args: type) Args {
             if (strings.eql(arg_name_app, arg_name_cli)) {
                 @field(counts, field.name) += 1;
 
-                const value = argx.parse_arg(field.type, arg);
+                const value = argx.parse_arg(io, field.type, arg);
                 @field(result, field.name) = value;
 
                 continue :next_arg;
@@ -252,7 +253,7 @@ fn parse_args(args: *ArgIterator, comptime Args: type) Args {
                     @field(counts, field.name) += 1;
                     const field_type = @TypeOf(@field(result, field.name));
 
-                    const value = argx.parse_arg(field_type, arg);
+                    const value = argx.parse_arg(io, field_type, arg);
                     @field(result, field.name) = value;
 
                     continue :next_arg;
@@ -261,7 +262,7 @@ fn parse_args(args: *ArgIterator, comptime Args: type) Args {
         }
 
         // If we are here, then the current CLI argument is unknown.
-        fatal("Unknown CLI argument: {s}\n", .{arg});
+        fatal(io, "Unknown CLI argument: {s}\n", .{arg});
     }
 
     inline for (fields[0..field_count]) |field| {
@@ -269,10 +270,10 @@ fn parse_args(args: *ArgIterator, comptime Args: type) Args {
             0 => if (structs.default_value(field)) |default| {
                 @field(result, field.name) = default;
             } else {
-                fatal("{s}: argument is required", .{field.name});
+                fatal(io, "{s}: argument is required", .{field.name});
             },
             1 => {},
-            else => fatal("{s}: duplicate argument", .{field.name}),
+            else => fatal(io, "{s}: duplicate argument", .{field.name}),
         }
     }
 
@@ -284,7 +285,7 @@ fn parse_args(args: *ArgIterator, comptime Args: type) Args {
                     // fill with default
                     @field(result.positional, positional_fields[idx].name) = positional_fields[idx].defaultValue() orelse null;
                 } else {
-                    fatal("{s}: argument is required", .{field.name});
+                    fatal(io, "{s}: argument is required", .{field.name});
                 }
             }
         }

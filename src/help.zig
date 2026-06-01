@@ -25,9 +25,8 @@ test requested_help {
 }
 
 /// If a container contains a help message, will print.
-pub fn try_print_help(comptime T: type) void {
+pub fn try_print_help(io: std.Io, comptime T: type) void {
     if (@hasDecl(T, "help")) {
-        const io = std.Io.Threaded.global_single_threaded.io();
         var stdout_buffer: [1024]u8 = undefined;
         var stdout_writer = std.Io.File.stdout().writer(io, &stdout_buffer);
         const writer = &stdout_writer.interface;

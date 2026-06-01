@@ -85,13 +85,13 @@ test unparsed_value {
 /// assert(std.mem.eql(parse_arg([]const u8, "--path=data.yaml"), "data.yaml"));
 /// assert(parse_arg(u32, "-n=5") == @as(u32, 5));
 /// ```
-pub fn parse_arg(comptime T: type, arg: []const u8) T {
+pub fn parse_arg(io: std.Io, comptime T: type, arg: []const u8) T {
     const arg_name = name(arg);
     const val = unparsed_value(arg);
     if (val.len == 0) {
-        fatal("Could not parse argument `{s}`: value length is 0. Did you forget the `=`? (like: `-{s}=`)", .{ arg_name, arg_name });
+        fatal(io, "Could not parse argument `{s}`: value length is 0. Did you forget the `=`? (like: `-{s}=`)", .{ arg_name, arg_name });
     }
-    return parse_value(T, arg_name, val);
+    return parse_value(io, T, arg_name, val);
 }
 
 /// Parses the unparsed value associated with the given argument name into the
@@ -101,13 +101,13 @@ pub fn parse_arg(comptime T: type, arg: []const u8) T {
 /// assert(std.mem.eql(parse_value([]const u8, "path", "data.yaml"), "data.yaml"));
 /// assert(parse_value(u32, "n", "5") == @as(u32, 5));
 /// ```
-pub fn parse_value(comptime T: type, arg_name: []const u8, arg_value: []const u8) T {
+pub fn parse_value(io: std.Io, comptime T: type, arg_name: []const u8, arg_value: []const u8) T {
     if (T == bool) return true;
 
     // this error is usually handled in parse_arg() already but checking for it
     // here doesn't harm.
     if (arg_value.len == 0) {
-        fatal("Value for argument `{s}` has zero length!", .{arg_name});
+        fatal(io, "Value for argument `{s}` has zero length!", .{arg_name});
     }
 
     const V = switch (@typeInfo(T)) {
@@ -116,8 +116,8 @@ pub fn parse_value(comptime T: type, arg_name: []const u8, arg_value: []const u8
     };
 
     if (V == []const u8 or V == [:0]const u8) return arg_value;
-    if (@typeInfo(V) == .int) return parse_value_int(V, arg_name, arg_value);
-    if (@typeInfo(V) == .@"enum") return parse_value_enum(V, arg_name, arg_value);
+    if (@typeInfo(V) == .int) return parse_value_int(io, V, arg_name, arg_value);
+    if (@typeInfo(V) == .@"enum") return parse_value_enum(io, V, arg_name, arg_value);
     comptime unreachable;
 }
 
@@ -127,14 +127,16 @@ pub fn parse_value(comptime T: type, arg_name: []const u8, arg_value: []const u8
 /// ```zig
 /// assert(parse_value_int(u32, "n", "5") == @as(u32, 5));
 /// ```
-fn parse_value_int(comptime T: type, arg_name: []const u8, val: []const u8) T {
+fn parse_value_int(io: std.Io, comptime T: type, arg_name: []const u8, val: []const u8) T {
     return std.fmt.parseInt(T, val, 10) catch |err| {
         switch (err) {
             error.Overflow => fatal(
+                io,
                 "{s}: value exceeds {d}-bit {s} integer: '{s}'",
                 .{ arg_name, @typeInfo(T).int.bits, @tagName(@typeInfo(T).int.signedness), val },
             ),
             error.InvalidCharacter => fatal(
+                io,
                 "{s}: expected an integer value, but found '{s}' (invalid digit)",
                 .{ arg_name, val },
             ),
@@ -143,8 +145,11 @@ fn parse_value_int(comptime T: type, arg_name: []const u8, val: []const u8) T {
 }
 
 test parse_value_int {
-    try expectEqual(parse_value_int(u32, "test-int", "6"), @as(u32, 6));
-    try expectEqual(parse_value_int(usize, "test-int", "12"), @as(usize, 12));
+    var threaded: std.Io.Threaded = .init(std.testing.allocator, .{});
+    defer threaded.deinit();
+    const io = threaded.io();
+    try expectEqual(parse_value_int(io, u32, "test-int", "6"), @as(u32, 6));
+    try expectEqual(parse_value_int(io, usize, "test-int", "12"), @as(usize, 12));
 }
 
 /// Parses the unparsed enum value associated with the given argument name into
@@ -159,10 +164,11 @@ test parse_value_int {
 /// assert(parse_value_enum(E, "test-enum", "ok"), .ok);
 /// assert(parse_value_enum(E, "test-enum", "not_ok"), .not_ok);
 /// ```
-fn parse_value_enum(comptime E: type, arg_name: []const u8, val: []const u8) E {
+fn parse_value_enum(io: std.Io, comptime E: type, arg_name: []const u8, val: []const u8) E {
     comptime assert(@typeInfo(E).@"enum".is_exhaustive);
 
     return std.meta.stringToEnum(E, val) orelse fatal(
+        io,
         "{s}: expected one of {s}, but found '{s}'",
         .{ arg_name, comptime strings.fields_to_string(E), val },
     );
@@ -174,6 +180,9 @@ test parse_value_enum {
         not_ok,
     };
 
-    try expectEqual(parse_value_enum(E, "test-enum", "ok"), .ok);
-    try expectEqual(parse_value_enum(E, "test-enum", "not_ok"), .not_ok);
+    var threaded: std.Io.Threaded = .init(std.testing.allocator, .{});
+    defer threaded.deinit();
+    const io = threaded.io();
+    try expectEqual(parse_value_enum(io, E, "test-enum", "ok"), .ok);
+    try expectEqual(parse_value_enum(io, E, "test-enum", "not_ok"), .not_ok);
 }
