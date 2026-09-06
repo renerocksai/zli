@@ -37,11 +37,11 @@ Like the original, this library aims to be an 80% solution. It supports:
 
 -   Subcommands;
 -   Manual help messages for each subcommand and a global help message;
--   Long (`--key=value`) and short (`-k=v`) options; and
+-   Long (`--key=value` or `--key value`) and short (`-k=v` or `-k v`) options; and
 -   Positional arguments.
 
-It does not auto-generate help messages, allow for `--key value` syntax, nor
-support chaining short arguments or delimiter separated values.
+It does not auto-generate help messages or support chained short arguments
+or delimiter-separated values.
 
 It retains the original source's reliance on asserts / fatal errors.
 
@@ -56,387 +56,102 @@ fantastic projects from the Zig community:
 -   [prajwalch/yazap](https://github.com/prajwalch/yazap) - The ultimate Zig library for seamless command line parsing. Effortlessly handles options, subcommands, and custom arguments with ease.
 -   [MasterQ32/zig-args](https://github.com/MasterQ32/zig-args) - Simple-to-use argument parser with struct-based config
 
+## Zig 0.16.0 and process initialization
+
+Use exact [Zig 0.16.0](https://ziglang.org/download/). The convenient entry point
+accepts the `std.process.Init` supplied to main:
+
+```zig
+const std = @import("std");
+const zli = @import("zli");
+
+const Options = struct {
+    port: u16 = 8080,
+    verbose: bool = false,
+    label: []const u8 = "server",
+
+    pub const aliases = .{ .port = "p", .verbose = "v" };
+    pub const help =
+        \\Usage: server [--port N] [--verbose] [--label TEXT]
+        \\  -h, --help       Show this help
+        \\  -p, --port N     Listen port (default: 8080)
+        \\  -v, --verbose    Enable verbose output
+    ;
+};
+
+pub fn main(init: std.process.Init) !void {
+    const options = try zli.parseInit(init, Options);
+    var buffer: [1024]u8 = undefined;
+    var output = std.Io.File.stdout().writer(init.io, &buffer);
+    try output.interface.print("{s}: port={d}, verbose={}\n", .{
+        options.label, options.port, options.verbose,
+    });
+    try output.interface.flush();
+}
+```
+
+`parseInit` uses `init.minimal.args`, `init.arena`, and `init.io`; it does not
+create an I/O provider or a separate general-purpose allocator. Argument
+normalization allocates from the process arena at startup where needed,
+including Windows command-line decoding. Parsed string fields borrow that
+storage and remain valid until the arena is reset or deinitialized. Do not
+reset it while retaining parsed strings. Sentinel slices (`[:0]const u8`) keep
+their terminating zero.
+
+The existing `zli.parse(io, &iterator, Options)` entry point remains available.
+With that entry point, the caller owns the argument iterator and must keep its
+storage alive while using returned strings. On Windows, create the iterator
+with `std.process.Args.Iterator.initAllocator`.
+
+Both APIs print help and exit successfully for exact `-h`, `--help`, or the
+legacy bare `help` token before `--`, and print
+a diagnostic and exit with status 1 for invalid CLI input. `parseInit` can also
+return an allocation error. This is a startup CLI API, not a recoverable parser
+for requests or an embedded command interpreter. Help text is supplied by your
+struct; it is not generated from field metadata.
+
+### Option syntax
+
+- `--port=8080`, `--port 8080`, `-p=8080`, and `-p 8080` are equivalent.
+- Zig fields such as `max_body` become `--max-body`.
+- A bare boolean flag means true; `--verbose=false` explicitly sets false.
+  Boolean flags do not consume the following positional argument.
+- `--` ends option and help recognition, so subsequent tokens are positional.
+- Named values may start with `-`; bare `--` is reserved as the end marker.
+  Use `--label=--` for that literal value. Empty values are valid for string fields.
+- Repeated options and unknown options are errors. Numeric ranges follow the
+  declared Zig type; enum values must match one of its tags.
+
 ## Installing
 
-Requires [zig v0.14.x](https://ziglang.org).
-1.  `zig fetch --save "git+https://github.com/renerocksai/zli#v0.1.1"`
-2.  Inside your `build.zig`, bring in the `zli` module and add it as an import
-    to your exe:
-    ```zig
-    // Your typical exe
-    const exe = b.addExecutable(.{
-        .name = "project",
-        .root_source_file = b.path("src/main.zig"),
-        .target = target,
-        .optimize = optimize,
-    });
-
-    // Now, add zli to the exe
-    const zli = b.dependency("zli", .{
-        .target = target,
-        .optimize = optimize,
-    });
-    exe.root_module.addImport("zli", zli.module("zli"));
-    ```
-3.  `zli` is now usable in your project:
-    ```zig
-    const zli = @import("zli");
-    ```
-
-## Examples
-### Simple
+Pin a commit of this [Zig 0.16 fork](https://github.com/renerocksai/zli) with
+`zig fetch --save=zli` and its archive URL. Add the dependency module to your
+executable in `build.zig`:
 
 ```zig
-const std = @import("std");
-const assert = std.debug.assert;
-const zli = @import("zli");
-
-pub fn main() !void {
-    var gpa = std.heap.GeneralPurposeAllocator(.{}){};
-    defer assert(gpa.deinit() == .ok);
-
-    const allocator = gpa.allocator();
-
-    var args = try std.process.argsWithAllocator(allocator);
-    defer args.deinit();
-
-    const App = union(enum) {
-        empty,
-        example: struct {
-            foo: u8 = 0,
-            foo_bar: u32 = 100,
-            foo_bar_baz: []const u8 = "foo",
-            opt: bool = false,
-
-            pub const aliases = .{
-                .foo = "f",
-                .foo_bar = "b",
-                .foo_bar_baz = "z",
-                .opt = "o",
-            };
-
-            pub const help =
-                \\ Command: example
-                \\
-                \\ Usage:
-                \\
-                \\ app example [options]
-                \\
-                \\ Options:
-                \\
-                \\ -h, --help               Displays this help message then exits
-                \\ -f, --foo=<n>            Help for foo. Default: 0
-                \\ -b, --foo-bar=<n>        Help for foo-bar. Default: 100
-                \\ -z, --foo-bar-baz=<n>    Help for foo-bar-baz. Default: foo
-                \\ -o, --opt                Help for opt. Default: false
-            ;
-        },
-        pos: struct {
-            verbose: bool = false,
-            positional: struct {
-                p1: []const u8,
-                p2: []const u8,
-            },
-
-            pub const aliases = .{
-                .verbose = "v",
-            };
-        },
-        required: struct {
-            foo: u8,
-            bar: u8,
-        },
-        values: struct {
-            int: u32 = 0,
-            boolean: bool = false,
-            path: []const u8 = "not-set",
-            optional: ?[]const u8 = null,
-            choice: enum { marlowe, shakespeare } = .marlowe,
-        },
-
-        pub const help =
-            \\ Usage: app [command] [options]
-            \\
-            \\ Commands:
-            \\  empty           Runs the empty command.
-            \\  example         Runs the example command.
-            \\  ...             ...
-            \\
-            \\ General Options:
-            \\  -h, --help      Displays this help message then exits
-        ;
-    };
-
-    const result = zli.parse(&args, App);
-    const writer = std.io.getStdOut().writer();
-
-    switch (result) {
-        .empty => try writer.print("Running command with no args", .{}),
-        .example => |values| {
-            try writer.print("Example:\n", .{});
-            try writer.print("\tFoo: {d}\n", .{values.foo});
-            try writer.print("\tFooBar: {d}\n", .{values.foo_bar});
-            try writer.print("\tFooBarBaz: {s}\n", .{values.foo_bar_baz});
-            try writer.print("\tOpt: {}\n", .{values.opt});
-        },
-        .pos => |values| {
-            try writer.print("Positional:\n", .{});
-            try writer.print("\tVerbose: {}\n", .{values.verbose});
-            try writer.print("\tPos 1: {s}\n", .{values.positional.p1});
-            try writer.print("\tPos 2: {s}\n", .{values.positional.p2});
-        },
-        .required => |values| {
-            try writer.print("Required:\n", .{});
-            try writer.print("\tFoo: {d}\n", .{values.foo});
-            try writer.print("\tBar: {d}\n", .{values.bar});
-        },
-        .values => |values| {
-            try writer.print("Values:\n", .{});
-            try writer.print("\tInt: {d}\n", .{values.int});
-            try writer.print("\tBool: {}\n", .{values.boolean});
-            try writer.print("\tString: {s}\n", .{values.path});
-            try writer.print("\tOptional: {?s}\n", .{values.optional});
-            try writer.print("\tEnum: {s}\n", .{@tagName(values.choice)});
-        },
-    }
-}
+const zli = b.dependency("zli", .{
+    .target = target,
+    .optimize = optimize,
+});
+exe.root_module.addImport("zli", zli.module("zli"));
 ```
 
-### Args Only
+## Runnable examples
 
-```zig
-const std = @import("std");
-const assert = std.debug.assert;
-const zli = @import("zli");
+- [args](example/args.zig): a typed struct with defaults, aliases, and flags.
+- [simple](example/simple.zig): options, positional arguments, and subcommands.
+- [subcommands](example/subcommands.zig): per-command state and help.
 
-pub fn main() !void {
-    var gpa = std.heap.GeneralPurposeAllocator(.{}){};
-    defer assert(gpa.deinit() == .ok);
+All use `pub fn main(init: std.process.Init) !void` and `try zli.parseInit`.
 
-    const allocator = gpa.allocator();
-
-    var args = try std.process.argsWithAllocator(allocator);
-    defer args.deinit();
-
-    const LogLevel = enum {
-        trace,
-        debug,
-        info,
-        warn,
-        err,
-    };
-
-    const App = struct {
-        port: []const u8 = "3000",
-        log_level: LogLevel = .info,
-        db_uri: []const u8,
-
-        pub const aliases = .{
-            .port = "p",
-            .log_level = "l",
-            .db_uri = "d",
-        };
-
-        pub const help =
-            \\ Usage:
-            \\
-            \\ app [options]
-            \\
-            \\ Options:
-            \\
-            \\ -h, --help                   Displays this help message then exits
-            \\ -l, --log-level=<LogLevel>   The log level threshold. Default: info
-            \\ -d, --db-uri                 The database URI. Required.
-        ;
-    };
-
-    const result = zli.parse(&args, App);
-    const writer = std.io.getStdOut().writer();
-
-    try writer.print("Port: {s}\n", .{result.port});
-    try writer.print("Log Level: {s}\n", .{@tagName(result.log_level)});
-    try writer.print("DB URI: {s}\n", .{result.db_uri});
-}
+```sh
+zig build verify -Doptimize=Debug
+zig build verify -Doptimize=ReleaseSafe
+./zig-out/bin/simple example --foo 42 --opt
+./zig-out/bin/simple --help
 ```
 
-### Subcommands
-```zig
-
-const std = @import("std");
-const assert = std.debug.assert;
-const writer = std.io.getStdOut().writer();
-
-const zli = @import("zli");
-
-const View = struct {
-    number: usize = 5,
-    data_path: []const u8 = "./data/data.json",
-    pub const aliases = .{
-        .number = "n",
-        .data_path = "p",
-    };
-
-    pub const help =
-        \\ Command: view
-        \\
-        \\ Usage:
-        \\
-        \\ app view [-n, --number=<amount>] [-p, --data-path=<path>]
-        \\
-        \\ Options:
-        \\
-        \\ -h, --help               Displays this help message then exits.
-        \\
-        \\ -n, --number             The number of items to view.
-        \\                          Default: 5.
-        \\
-        \\ -p, --data-path=<path>   The relative path to the data file.
-        \\                          Default: ./data/data.json
-    ;
-};
-
-const ViewAll = struct {
-    data_path: []const u8 = "./data/data.json",
-    pub const aliases = .{
-        .data_path = "p",
-    };
-
-    pub const help =
-        \\ Command: view-all
-        \\
-        \\ Usage:
-        \\
-        \\ app view-all -p, [--data-path=<path>]
-        \\
-        \\ Options:
-        \\
-        \\ -h, --help               Displays this help message then exits.
-        \\
-        \\ -p, --data-path=<path>   The relative path to the data file.
-        \\                          Default: ./data/data.json
-    ;
-};
-
-const Add = struct {
-    data_path: []const u8 = "./data/data.json",
-    positional: struct {
-        item: []const u8,
-    },
-
-    pub const aliases = .{
-        .data_path = "p",
-    };
-
-    pub const help =
-        \\ Command: add
-        \\
-        \\ Usage:
-        \\
-        \\ app add [-p, --data-path=<path>] <item>
-        \\
-        \\ Options:
-        \\
-        \\ -h, --help               Displays this help message then exits
-        \\
-        \\ -p, --data-path=<path>   The relative path to the data file.
-        \\                          Default: ./data/data.json
-    ;
-};
-
-const Delete = struct {
-    data_path: []const u8 = "./data/data.json",
-    positional: struct {
-        item: []const u8,
-    },
-
-    pub const aliases = .{
-        .data_path = "p",
-    };
-
-    pub const help =
-        \\ Command: delete
-        \\
-        \\ Usage:
-        \\
-        \\ app delete [-p, --data-path=<path>] <item>
-        \\
-        \\ Options:
-        \\
-        \\ -h, --help               Displays this help message then exits
-        \\
-        \\ -p, --data-path=<path>   The relative path to the data file.
-        \\                          Default: ./data/data.json
-    ;
-};
-
-const App = union(enum) {
-    view: View,
-    view_all: ViewAll,
-    add: Add,
-    delete: Delete,
-
-    pub const help =
-        \\ Usage: app [command] [options]
-        \\
-        \\ Commands:
-        \\  view            View the last n items.
-        \\  view-all        View all items.
-        \\  add             Add a new item.
-        \\  delete          Delete an item.
-        \\
-        \\ General Options:
-        \\  -h, --help      Displays this help message then exits
-    ;
-};
-
-pub fn main() !void {
-    var gpa = std.heap.GeneralPurposeAllocator(.{}){};
-    defer assert(gpa.deinit() == .ok);
-
-    const allocator = gpa.allocator();
-
-    var args = try std.process.argsWithAllocator(allocator);
-    defer args.deinit();
-
-    const result = zli.parse(&args, App);
-
-    switch (result) {
-        .view => |values| {
-            try view(values);
-        },
-        .view_all => |values| {
-            try view_all(values);
-        },
-        .add => |values| {
-            try add(values);
-        },
-        .delete => |values| {
-            try delete(values);
-        },
-    }
-}
-
-fn view(values: View) !void {
-    try writer.print("View", .{});
-    try writer.print("\tPath: {s}\n", .{values.data_path});
-    try writer.print("\tNumber: {d}\n", .{values.number});
-}
-
-fn view_all(values: ViewAll) !void {
-    try writer.print("View All", .{});
-    try writer.print("\tPath: {s}\n", .{values.data_path});
-}
-
-fn add(values: Add) !void {
-    try writer.print("Add Command:\n", .{});
-    try writer.print("\tPath: {s}\n", .{values.data_path});
-    try writer.print("\tPositional: {s}\n", .{values.positional.item});
-}
-
-fn delete(values: Delete) !void {
-    try writer.print("Delete Command:\n", .{});
-    try writer.print("\tPath: {s}\n", .{values.data_path});
-    try writer.print("\tPositional: {s}\n", .{values.positional.item});
-}
-
-```
+`zig build test` executes tests. `verify` also compiles the examples, checks
+formatting, and exercises the process argument path. `check` compiles target
+binaries without running them. CI runs Debug and ReleaseSafe natively on
+Linux, macOS, and Windows; cross-compilation alone is not runtime evidence.

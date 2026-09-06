@@ -64,19 +64,20 @@ test name {
 /// assert(std.mem.eql(unparsed_value("--path=data.yaml"), "data.yaml"));
 /// assert(std.mem.eql(unparsed_value("-n=5"), "5"));
 /// ```
-fn unparsed_value(arg: []const u8) []const u8 {
+fn unparsed_value(arg: [:0]const u8) ?[:0]const u8 {
     if (strings.index_of(arg, "=")) |pos_of_equ| {
         const split_at = pos_of_equ + 1;
-        if (arg.len > split_at)
-            return arg[split_at..];
+        return arg[split_at.. :0];
     }
-    return "";
+    return null;
 }
 
 test unparsed_value {
-    try expectEqualStrings("path.yaml", unparsed_value("--path=path.yaml"));
-    try expectEqualStrings("path.yaml", unparsed_value("-p=path.yaml"));
-    try expectEqualStrings("hello", unparsed_value("--long-var=hello"));
+    try expectEqualStrings("path.yaml", unparsed_value("--path=path.yaml").?);
+    try expectEqualStrings("path.yaml", unparsed_value("-p=path.yaml").?);
+    try expectEqualStrings("hello", unparsed_value("--long-var=hello").?);
+    try expectEqualStrings("", unparsed_value("--path=").?);
+    try expectEqual(null, unparsed_value("--path"));
 }
 
 /// Takes in an unparsed CLI argument and parses out its value.
@@ -85,12 +86,12 @@ test unparsed_value {
 /// assert(std.mem.eql(parse_arg([]const u8, "--path=data.yaml"), "data.yaml"));
 /// assert(parse_arg(u32, "-n=5") == @as(u32, 5));
 /// ```
-pub fn parse_arg(io: std.Io, comptime T: type, arg: []const u8) T {
+pub fn parse_arg(io: std.Io, comptime T: type, arg: [:0]const u8) T {
     const arg_name = name(arg);
-    const val = unparsed_value(arg);
-    if (val.len == 0) {
-        fatal(io, "Could not parse argument `{s}`: value length is 0. Did you forget the `=`? (like: `-{s}=`)", .{ arg_name, arg_name });
-    }
+    const val = unparsed_value(arg) orelse {
+        if (T == bool) return true;
+        fatal(io, "{s}: argument value required", .{arg_name});
+    };
     return parse_value(io, T, arg_name, val);
 }
 
@@ -101,21 +102,19 @@ pub fn parse_arg(io: std.Io, comptime T: type, arg: []const u8) T {
 /// assert(std.mem.eql(parse_value([]const u8, "path", "data.yaml"), "data.yaml"));
 /// assert(parse_value(u32, "n", "5") == @as(u32, 5));
 /// ```
-pub fn parse_value(io: std.Io, comptime T: type, arg_name: []const u8, arg_value: []const u8) T {
-    if (T == bool) return true;
-
-    // this error is usually handled in parse_arg() already but checking for it
-    // here doesn't harm.
-    if (arg_value.len == 0) {
-        fatal(io, "Value for argument `{s}` has zero length!", .{arg_name});
-    }
-
+pub fn parse_value(io: std.Io, comptime T: type, arg_name: []const u8, arg_value: [:0]const u8) T {
     const V = switch (@typeInfo(T)) {
         .optional => |optional| optional.child,
         else => T,
     };
 
     if (V == []const u8 or V == [:0]const u8) return arg_value;
+    if (V == bool) {
+        if (strings.eql(arg_value, "true")) return true;
+        if (strings.eql(arg_value, "false")) return false;
+        fatal(io, "{s}: expected true or false, but found '{s}'", .{ arg_name, arg_value });
+    }
+    if (arg_value.len == 0) fatal(io, "{s}: argument value must not be empty", .{arg_name});
     if (@typeInfo(V) == .int) return parse_value_int(io, V, arg_name, arg_value);
     if (@typeInfo(V) == .@"enum") return parse_value_enum(io, V, arg_name, arg_value);
     comptime unreachable;
@@ -145,9 +144,7 @@ fn parse_value_int(io: std.Io, comptime T: type, arg_name: []const u8, val: []co
 }
 
 test parse_value_int {
-    var threaded: std.Io.Threaded = .init(std.testing.allocator, .{});
-    defer threaded.deinit();
-    const io = threaded.io();
+    const io = std.testing.io;
     try expectEqual(parse_value_int(io, u32, "test-int", "6"), @as(u32, 6));
     try expectEqual(parse_value_int(io, usize, "test-int", "12"), @as(usize, 12));
 }
@@ -180,9 +177,7 @@ test parse_value_enum {
         not_ok,
     };
 
-    var threaded: std.Io.Threaded = .init(std.testing.allocator, .{});
-    defer threaded.deinit();
-    const io = threaded.io();
+    const io = std.testing.io;
     try expectEqual(parse_value_enum(io, E, "test-enum", "ok"), .ok);
     try expectEqual(parse_value_enum(io, E, "test-enum", "not_ok"), .not_ok);
 }

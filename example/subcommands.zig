@@ -128,13 +128,11 @@ const App = union(enum) {
 pub fn main(init: std.process.Init) !void {
     const io = init.io;
 
-    var args: std.process.Args.Iterator = .init(init.minimal.args);
-
     var stdout_buffer: [1024]u8 = undefined;
     var stdout_writer = std.Io.File.stdout().writer(io, &stdout_buffer);
     const writer = &stdout_writer.interface;
 
-    const result = zli.parse(io, &args, App);
+    const result = try zli.parseInit(init, App);
 
     switch (result) {
         .view => |values| {

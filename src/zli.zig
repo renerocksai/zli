@@ -36,11 +36,11 @@
 //! Like the original, this library aims to be an 80% solution. It supports:
 //! -   Subcommands;
 //! -   Manual help messages for each subcommand and a global help message;
-//! -   Long (`--key=value`) and short (`-k=v`) options; and
+//! -   Long and short options with attached or separate values; and
 //! -   Positional arguments.
 //!
-//! It does not auto-generate help messages, allow for `--key value` syntax, nor
-//! support chaining short arguments or delimiter separated values.
+//! It does not auto-generate help messages or support chaining short arguments
+//! or delimiter separated values.
 //!
 //! It retains the original source's reliance on asserts / fatal errors.
 //!
@@ -52,7 +52,6 @@
 const std = @import("std");
 const ArgIterator = std.process.Args.Iterator;
 const StructField = std.builtin.Type.StructField;
-const UnionField = std.builtin.Type.UnionField;
 const assert = std.debug.assert;
 
 const fatal = @import("./fatal.zig").fatal;
@@ -111,7 +110,33 @@ const help = @import("./help.zig");
 /// };
 /// ```
 pub fn parse(io: std.Io, args: *ArgIterator, comptime CLIArgs: type) CLIArgs {
-    assert(args.skip()); // Discard executable name.
+    return parse_iterator(io, args, CLIArgs);
+}
+
+/// Parse process arguments at startup using the caller's I/O and permanent arena.
+/// Returned string fields borrow process arguments or `init.arena` storage.
+/// Keep that storage alive until the last use of the parsed configuration.
+/// This function does not free argument storage or create an I/O implementation.
+/// Allocation errors return to the caller; help and syntax errors exit the process.
+pub fn parseInit(init: std.process.Init, comptime CLIArgs: type) std.process.Args.ToSliceError!CLIArgs {
+    var args: SliceIterator = .{ .values = try init.minimal.args.toSlice(init.arena.allocator()) };
+    return parse_iterator(init.io, &args, CLIArgs);
+}
+
+const SliceIterator = struct {
+    values: []const [:0]const u8,
+    index: usize = 0,
+
+    fn next(self: *SliceIterator) ?[:0]const u8 {
+        if (self.index == self.values.len) return null;
+        const value = self.values[self.index];
+        self.index += 1;
+        return value;
+    }
+};
+
+fn parse_iterator(io: std.Io, args: anytype, comptime CLIArgs: type) CLIArgs {
+    _ = args.next() orelse fatal(io, "executable name missing", .{});
 
     return switch (@typeInfo(CLIArgs)) {
         .@"union" => parse_commands(io, args, CLIArgs),
@@ -120,7 +145,7 @@ pub fn parse(io: std.Io, args: *ArgIterator, comptime CLIArgs: type) CLIArgs {
     };
 }
 
-fn parse_commands(io: std.Io, args: *ArgIterator, comptime Commands: type) Commands {
+fn parse_commands(io: std.Io, args: anytype, comptime Commands: type) Commands {
     comptime assert(@typeInfo(Commands) == .@"union");
     comptime assert(std.meta.fields(Commands).len > 1);
 
@@ -147,7 +172,7 @@ fn parse_commands(io: std.Io, args: *ArgIterator, comptime Commands: type) Comma
     });
 }
 
-fn parse_args(io: std.Io, args: *ArgIterator, comptime Args: type) Args {
+fn parse_args(io: std.Io, args: anytype, comptime Args: type) Args {
     if (Args == void) {
         if (args.next()) |arg| {
             fatal(io, "unexpected argument: '{s}'", .{arg});
@@ -199,13 +224,21 @@ fn parse_args(io: std.Io, args: *ArgIterator, comptime Args: type) Args {
     var result: Args = undefined;
     var counts: structs.struct_field_struct(Args, u32, 0) = .{};
     var parsed_positional = false;
+    var options_ended = false;
 
     next_arg: while (args.next()) |arg| {
-        if (help.requested_help(arg)) {
+        if (!options_ended and strings.eql(arg, "--")) {
+            options_ended = true;
+            continue;
+        }
+        if (!options_ended and help.requested_help(arg)) {
             help.try_print_help(io, Args);
         }
 
-        const is_positional = if (arg[0] == '-') false else true;
+        // A lone dash and negative numbers are positional values. Other values
+        // starting with a dash require `--` before the positional arguments.
+        const is_positional = options_ended or arg.len == 0 or arg[0] != '-' or
+            arg.len == 1 or (arg.len > 1 and std.ascii.isDigit(arg[1]));
         if (is_positional and @hasField(Args, "positional")) {
             if (parsed_positional) {
                 fatal(io, "Unknown positional argument: {s}", .{arg});
@@ -226,6 +259,8 @@ fn parse_args(io: std.Io, args: *ArgIterator, comptime Args: type) Args {
             }
         }
 
+        if (is_positional) fatal(io, "Unknown positional argument: {s}", .{arg});
+
         // arg is now known to not be positional, which means it must start
         // with a dash.
         const arg_name_cli = argx.name(arg);
@@ -234,9 +269,10 @@ fn parse_args(io: std.Io, args: *ArgIterator, comptime Args: type) Args {
             const arg_name_app = comptime strings.replace(field.name, "_", "-");
 
             if (strings.eql(arg_name_app, arg_name_cli)) {
-                @field(counts, field.name) += 1;
+                if (@field(counts, field.name) != 0) fatal(io, "{s}: duplicate argument", .{field.name});
+                @field(counts, field.name) = 1;
 
-                const value = argx.parse_arg(io, field.type, arg);
+                const value = parse_option(io, field.type, arg, args);
                 @field(result, field.name) = value;
 
                 continue :next_arg;
@@ -250,10 +286,11 @@ fn parse_args(io: std.Io, args: *ArgIterator, comptime Args: type) Args {
                 const alias = @field(aliases, field.name);
 
                 if (strings.eql(alias, arg_name_cli)) {
-                    @field(counts, field.name) += 1;
+                    if (@field(counts, field.name) != 0) fatal(io, "{s}: duplicate argument", .{field.name});
+                    @field(counts, field.name) = 1;
                     const field_type = @TypeOf(@field(result, field.name));
 
-                    const value = argx.parse_arg(io, field_type, arg);
+                    const value = parse_option(io, field_type, arg, args);
                     @field(result, field.name) = value;
 
                     continue :next_arg;
@@ -281,9 +318,8 @@ fn parse_args(io: std.Io, args: *ArgIterator, comptime Args: type) Args {
         assert(counts.positional <= positional_fields.len);
         inline for (positional_fields, 0..) |field, idx| {
             if (idx >= counts.positional) {
-                if (positional_fields[idx].default_value_ptr) |_| {
-                    // fill with default
-                    @field(result.positional, positional_fields[idx].name) = positional_fields[idx].defaultValue() orelse null;
+                if (field.default_value_ptr != null) {
+                    @field(result.positional, field.name) = field.defaultValue().?;
                 } else {
                     fatal(io, "{s}: argument is required", .{field.name});
                 }
@@ -292,4 +328,148 @@ fn parse_args(io: std.Io, args: *ArgIterator, comptime Args: type) Args {
     }
 
     return result;
+}
+
+fn parse_option(io: std.Io, comptime T: type, arg: [:0]const u8, args: anytype) T {
+    if (T == bool or std.mem.indexOfScalar(u8, arg, '=') != null) {
+        return argx.parse_arg(io, T, arg);
+    }
+    const arg_name = argx.name(arg);
+    const value = args.next() orelse fatal(io, "{s}: argument value required", .{arg_name});
+    if (strings.eql(value, "--")) fatal(io, "{s}: argument value required before --", .{arg_name});
+    return argx.parse_value(io, T, arg_name, value);
+}
+
+test "attached and separate values preserve defaults aliases enums and optional fields" {
+    const Options = struct {
+        port: u16 = 8080,
+        duration_ms: u32 = 100,
+        execution: enum { @"inline", workers } = .workers,
+        workers: ?u16 = null,
+        pub const aliases = .{ .port = "p", .duration_ms = "d" };
+    };
+    var attached: SliceIterator = .{ .values = &.{ "app", "-p=9000", "--duration-ms=25", "--execution=inline", "--workers=2" } };
+    var separate: SliceIterator = .{ .values = &.{ "app", "--port", "9000", "-d", "25", "--execution", "inline", "--workers", "2" } };
+    const expected: Options = .{ .port = 9000, .duration_ms = 25, .execution = .@"inline", .workers = 2 };
+    try std.testing.expectEqualDeep(expected, parse_iterator(std.testing.io, &attached, Options));
+    try std.testing.expectEqualDeep(expected, parse_iterator(std.testing.io, &separate, Options));
+    var empty: SliceIterator = .{ .values = &.{"app"} };
+    try std.testing.expectEqualDeep(Options{}, parse_iterator(std.testing.io, &empty, Options));
+}
+
+test "boolean options do not consume following positional values" {
+    const Options = struct {
+        verbose: bool = false,
+        positional: struct { value: []const u8 },
+        pub const aliases = .{ .verbose = "v" };
+    };
+    var bare: SliceIterator = .{ .values = &.{ "app", "-v", "false" } };
+    const present = parse_iterator(std.testing.io, &bare, Options);
+    try std.testing.expect(present.verbose);
+    try std.testing.expectEqualStrings("false", present.positional.value);
+    var explicit: SliceIterator = .{ .values = &.{ "app", "--verbose=false", "true" } };
+    const disabled = parse_iterator(std.testing.io, &explicit, Options);
+    try std.testing.expect(!disabled.verbose);
+    try std.testing.expectEqualStrings("true", disabled.positional.value);
+}
+
+test "strings retain original sentinel slices including empty values" {
+    const Options = struct {
+        text: []const u8,
+        sentinel: [:0]const u8,
+        optional: ?[:0]const u8 = null,
+        positional: struct { empty: [:0]const u8 },
+    };
+    const sentinel: [:0]const u8 = "--sentinel=retained";
+    const optional: [:0]const u8 = "another value";
+    var args: SliceIterator = .{ .values = &.{ "app", "--text=", sentinel, "--optional", optional, "" } };
+    const result = parse_iterator(std.testing.io, &args, Options);
+    try std.testing.expectEqualStrings("", result.text);
+    try std.testing.expectEqualStrings("retained", result.sentinel);
+    try std.testing.expect(result.sentinel.ptr == sentinel.ptr + "--sentinel=".len);
+    try std.testing.expect(result.optional.?.ptr == optional.ptr);
+    try std.testing.expectEqual(@as(u8, 0), result.sentinel[result.sentinel.len]);
+    try std.testing.expectEqualStrings("", result.positional.empty);
+    try std.testing.expectEqual(@as(u8, 0), result.positional.empty[0]);
+}
+
+test "negative values and end of options preserve positional tokens" {
+    const Numbers = struct { number: i16 = 0, positional: struct { value: i16 } };
+    var negative: SliceIterator = .{ .values = &.{ "app", "--number", "-12", "-4" } };
+    try std.testing.expectEqualDeep(Numbers{ .number = -12, .positional = .{ .value = -4 } }, parse_iterator(std.testing.io, &negative, Numbers));
+
+    const Strings = struct {
+        positional: struct { first: []const u8, second: []const u8, third: []const u8 },
+        pub const help = "must not print";
+    };
+    var ended: SliceIterator = .{ .values = &.{ "app", "--", "--help", "--", "-file" } };
+    const result = parse_iterator(std.testing.io, &ended, Strings);
+    try std.testing.expectEqualStrings("--help", result.positional.first);
+    try std.testing.expectEqualStrings("--", result.positional.second);
+    try std.testing.expectEqualStrings("-file", result.positional.third);
+}
+
+test "subcommands fill optional positional defaults" {
+    const Commands = union(enum) {
+        list_items: struct { positional: struct { first: []const u8, second: ?[]const u8 = null, third: u8 = 7 } },
+        empty,
+    };
+    var args: SliceIterator = .{ .values = &.{ "app", "list-items", "item" } };
+    const result = parse_iterator(std.testing.io, &args, Commands);
+    try std.testing.expectEqualStrings("item", result.list_items.positional.first);
+    try std.testing.expectEqual(@as(?[]const u8, null), result.list_items.positional.second);
+    try std.testing.expectEqual(@as(u8, 7), result.list_items.positional.third);
+}
+
+fn test_process_args() std.process.Args {
+    return switch (@import("builtin").os.tag) {
+        .windows => .{ .vector = std.unicode.utf8ToUtf16LeStringLiteral("app --text=retained --sentinel=sentinel") },
+        .wasi => unreachable,
+        else => .{ .vector = &.{ "app", "--text=retained", "--sentinel=sentinel" } },
+    };
+}
+
+test "parseInit retains borrowed strings after returning and legacy iterator agrees" {
+    if (@import("builtin").os.tag == .wasi) return error.SkipZigTest;
+    const Options = struct { text: []const u8, sentinel: [:0]const u8 };
+    var arena: std.heap.ArenaAllocator = .init(std.testing.allocator);
+    defer arena.deinit();
+    var environ: std.process.Environ.Map = .init(std.testing.allocator);
+    defer environ.deinit();
+    const init: std.process.Init = .{
+        .minimal = .{ .args = test_process_args(), .environ = .empty },
+        .arena = &arena,
+        .gpa = std.testing.allocator,
+        .io = std.testing.io,
+        .environ_map = &environ,
+        .preopens = .empty,
+    };
+    const result = try parseInit(init, Options);
+    const scratch = try arena.allocator().alloc(u8, 4096);
+    @memset(scratch, 0xa5);
+    try std.testing.expectEqualStrings("retained", result.text);
+    try std.testing.expectEqualStrings("sentinel", result.sentinel);
+    try std.testing.expectEqual(@as(u8, 0), result.sentinel[result.sentinel.len]);
+
+    var iterator = try test_process_args().iterateAllocator(std.testing.allocator);
+    defer iterator.deinit();
+    try std.testing.expectEqualDeep(result, parse(std.testing.io, &iterator, Options));
+}
+
+test "parseInit returns arena allocation failure" {
+    if (@import("builtin").os.tag == .wasi) return error.SkipZigTest;
+    var failing: std.testing.FailingAllocator = .init(std.testing.allocator, .{ .fail_index = 0 });
+    var arena: std.heap.ArenaAllocator = .init(failing.allocator());
+    defer arena.deinit();
+    var environ: std.process.Environ.Map = .init(std.testing.allocator);
+    defer environ.deinit();
+    const init: std.process.Init = .{
+        .minimal = .{ .args = test_process_args(), .environ = .empty },
+        .arena = &arena,
+        .gpa = std.testing.allocator,
+        .io = std.testing.io,
+        .environ_map = &environ,
+        .preopens = .empty,
+    };
+    try std.testing.expectError(error.OutOfMemory, parseInit(init, struct { text: []const u8, sentinel: [:0]const u8 }));
 }
