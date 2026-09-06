@@ -1,0 +1,73 @@
+name: Zig 0.16 verification
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: zli-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  native:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 15
+    env:
+      PYTHONUTF8: "1"
+      PYTHONDONTWRITEBYTECODE: "1"
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Install exact checksum-verified Zig
+        shell: python
+        run: |
+          import hashlib, json, os, pathlib, platform, tarfile, urllib.request, zipfile
+          version = pathlib.Path('.zig-version').read_text().strip()
+          assert version == '0.16.0'
+          architecture = {'AMD64': 'x86_64', 'x86_64': 'x86_64', 'arm64': 'aarch64', 'aarch64': 'aarch64'}[platform.machine()]
+          system = {'Windows': 'windows', 'Linux': 'linux', 'Darwin': 'macos'}[platform.system()]
+          with urllib.request.urlopen('https://ziglang.org/download/index.json', timeout=30) as response:
+              artifact = json.load(response)[version][f'{architecture}-{system}']
+          assert artifact['tarball'].startswith('https://ziglang.org/')
+          directory = pathlib.Path(os.environ['RUNNER_TEMP']) / 'zli-zig'
+          directory.mkdir()
+          archive = directory / ('zig.zip' if system == 'windows' else 'zig.tar.xz')
+          with urllib.request.urlopen(artifact['tarball'], timeout=180) as response:
+              archive.write_bytes(response.read())
+          assert hashlib.sha256(archive.read_bytes()).hexdigest() == artifact['shasum']
+          if system == 'windows':
+              with zipfile.ZipFile(archive) as package:
+                  package.extractall(directory)
+          else:
+              with tarfile.open(archive) as package:
+                  package.extractall(directory, filter='data')
+          compiler, = directory.glob('*/zig.exe' if system == 'windows' else '*/zig')
+          with open(os.environ['GITHUB_PATH'], 'a') as path:
+              path.write(str(compiler.parent) + '\n')
+      - name: Verify Debug and ReleaseSafe
+        shell: python
+        run: |
+          import os, pathlib, platform, subprocess
+          packet = pathlib.Path(os.environ['RUNNER_TEMP']) / 'zli-evidence'
+          packet.mkdir()
+          (packet / 'environment.txt').write_text(platform.platform() + '\n' + platform.machine() + '\n' + os.environ['GITHUB_SHA'] + '\n' + subprocess.check_output(['zig', 'version'], text=True))
+          for mode in ['Debug', 'ReleaseSafe']:
+              result = subprocess.run(['zig', 'build', 'verify', '-Doptimize=' + mode, '-j2', '--summary', 'all'], stdout=subprocess.PIPE, stderr=subprocess.STDOUT, timeout=360)
+              (packet / (mode + '.log')).write_bytes(result.stdout)
+              print(result.stdout.decode('utf-8', errors='replace'))
+              result.check_returncode()
+      - name: Upload native receipts
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: zli-${{ matrix.os }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/zli-evidence
+          if-no-files-found: warn
+          retention-days: 14

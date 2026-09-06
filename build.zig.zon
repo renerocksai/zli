@@ -2,7 +2,7 @@
     .name = .zli,
     .version = "0.1.1",
     .fingerprint = 0x5b01c9c38221e7a5, // Changing this has security and trust implications.
-    .minimum_zig_version = "0.14.0",
+    .minimum_zig_version = "0.16.0",
     .dependencies = .{
         // See `zig fetch --save <url>` for a command-line interface for adding dependencies.
         //.example = .{
@@ -39,6 +39,10 @@
         "build.zig",
         "build.zig.zon",
         "src",
+        "example",
+        "tests",
+        ".zig-version",
+        "README.md",
         "LICENSE",
     },
 }

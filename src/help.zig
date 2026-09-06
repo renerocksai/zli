@@ -8,7 +8,7 @@ const help_strings = [_][]const u8{ "--help", "-h", "help" };
 /// Determines if a given option name matches a request for help.
 pub fn requested_help(option_name: []const u8) bool {
     for (help_strings) |h| {
-        if (strings.starts_with(h, option_name)) {
+        if (strings.eql(h, option_name)) {
             return true;
         }
     }
@@ -21,7 +21,9 @@ test requested_help {
         try expect(requested_help(str) == true);
     }
 
-    try expect(requested_help("bad") == false);
+    for ([_][]const u8{ "bad", "", "-", "--", "h", "he", "hel", "--hel", "--help=1", "-hello" }) |str| {
+        try expect(!requested_help(str));
+    }
 }
 
 /// If a container contains a help message, will print.
