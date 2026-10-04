@@ -44,20 +44,26 @@ test replace {
 /// Takes in a type and returns a comma separated string of field names.
 pub fn fields_to_string(comptime T: type) []const u8 {
     comptime {
-        const fields = std.meta.fields(T);
-        const len = fields.len;
+        const names = switch (@typeInfo(T)) {
+            .@"struct" => |info| info.field_names,
+            .@"union" => |info| info.field_names,
+            .@"enum" => |info| info.field_names,
+            .error_set => |info| info.error_names orelse @compileError("anyerror has no field names"),
+            else => @compileError("expected a struct, union, enum, or error set"),
+        };
+        const len = names.len;
         assert(len > 1);
 
         var out: []const u8 = "";
 
-        for (fields, 0..) |field, idx| {
+        for (names, 0..) |name, idx| {
             const sep = switch (idx) {
                 0 => "",
                 len - 1 => " or ",
                 else => ", ",
             };
 
-            out = out ++ sep ++ "\"" ++ field.name ++ "\"";
+            out = out ++ sep ++ "\"" ++ name ++ "\"";
         }
 
         return out;
