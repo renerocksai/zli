@@ -124,7 +124,7 @@ struct; it is not generated from field metadata.
 
 ## Installing
 
-Pin a commit of this [Zig 0.16 fork](https://github.com/renerocksai/zli) with
+Pin a commit of this [Zig 0.17 fork](https://github.com/renerocksai/zli) with
 `zig fetch --save=zli` and its archive URL. Add the dependency module to your
 executable in `build.zig`:
 
