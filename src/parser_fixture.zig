@@ -20,6 +20,12 @@ const Options = struct {
 const Commands = union(enum) {
     values: Options,
     required: struct { number: u8 },
+    positional_defaults: struct {
+        before: u8 = 11,
+        positional: struct { first: []const u8, second: ?[:0]const u8 = "fallback" },
+        after: u16 = 42,
+        pub const aliases = .{ .after = "a" };
+    },
     no_help: struct {},
     empty,
 
@@ -65,6 +71,10 @@ fn write_result(init: std.process.Init, result: Commands) !void {
             try std.json.Stringify.value(value, .{}, writer);
         },
         .required => |value| try std.json.Stringify.value(value, .{}, writer),
+        .positional_defaults => |value| {
+            if (value.positional.second) |text| std.debug.assert(text[text.len] == 0);
+            try std.json.Stringify.value(value, .{}, writer);
+        },
         .no_help, .empty => try writer.writeAll("{}"),
     }
     try writer.writeByte('\n');

@@ -51,7 +51,6 @@
 
 const std = @import("std");
 const ArgIterator = std.process.Args.Iterator;
-const StructField = std.builtin.Type.StructField;
 const assert = std.debug.assert;
 
 const fatal = @import("./fatal.zig").fatal;
@@ -147,7 +146,8 @@ fn parse_iterator(io: std.Io, args: anytype, comptime CLIArgs: type) CLIArgs {
 
 fn parse_commands(io: std.Io, args: anytype, comptime Commands: type) Commands {
     comptime assert(@typeInfo(Commands) == .@"union");
-    comptime assert(std.meta.fields(Commands).len > 1);
+    const info = @typeInfo(Commands).@"union";
+    comptime assert(info.field_names.len > 1);
 
     const command = args.next() orelse fatal(
         io,
@@ -159,10 +159,10 @@ fn parse_commands(io: std.Io, args: anytype, comptime Commands: type) Commands {
         help.try_print_help(io, Commands);
     }
 
-    inline for (comptime std.meta.fields(Commands)) |field| {
-        const parsed_field = comptime strings.replace(field.name, "_", "-");
+    inline for (info.field_names, info.field_types) |name, FieldType| {
+        const parsed_field = comptime strings.replace(name, "_", "-");
         if (strings.eql(command, parsed_field)) {
-            return @unionInit(Commands, field.name, parse_args(io, args, field.type));
+            return @unionInit(Commands, name, parse_args(io, args, FieldType));
         }
     }
 
@@ -182,41 +182,42 @@ fn parse_args(io: std.Io, args: anytype, comptime Args: type) Args {
 
     comptime assert(@typeInfo(Args) == .@"struct");
 
-    comptime var fields: [std.meta.fields(Args).len]StructField = undefined;
+    const info = @typeInfo(Args).@"struct";
+    comptime var fields: [info.field_names.len]usize = undefined;
     comptime var field_count = 0;
 
-    comptime var positional_fields: []const StructField = &.{};
+    comptime var positional = @typeInfo(struct {}).@"struct";
 
-    comptime for (std.meta.fields(Args)) |field| {
-        if (strings.eql(field.name, "positional")) {
-            assert(@typeInfo(field.type) == .@"struct");
+    comptime for (info.field_names, info.field_types, info.field_attrs, 0..) |name, FieldType, attrs, index| {
+        if (strings.eql(name, "positional")) {
+            assert(@typeInfo(FieldType) == .@"struct");
 
-            positional_fields = std.meta.fields(field.type);
+            positional = @typeInfo(FieldType).@"struct";
 
-            for (positional_fields) |positional_field| {
-                switch (@typeInfo(positional_field.type)) {
+            for (positional.field_types) |PositionalType| {
+                switch (@typeInfo(PositionalType)) {
                     .optional => |optional| {
                         // if no default: will be required
                         argx.assert_valid_value_type(optional.child);
                     },
-                    else => argx.assert_valid_value_type(positional_field.type),
+                    else => argx.assert_valid_value_type(PositionalType),
                 }
             }
         } else {
-            switch (@typeInfo(field.type)) {
+            switch (@typeInfo(FieldType)) {
                 .bool => {
-                    assert(structs.default_value(field).? == false); // boolean flags should have a default of false
+                    assert(attrs.defaultValue(FieldType).? == false); // boolean flags should have a default of false
                 },
                 .optional => |optional| {
-                    assert(structs.default_value(field).? == null); // optional flags should have a default of null
+                    assert(attrs.defaultValue(FieldType).? == null); // optional flags should have a default of null
                     argx.assert_valid_value_type(optional.child);
                 },
                 else => {
-                    argx.assert_valid_value_type(field.type);
+                    argx.assert_valid_value_type(FieldType);
                 },
             }
 
-            fields[field_count] = field;
+            fields[field_count] = index;
             field_count += 1;
         }
     };
@@ -244,13 +245,13 @@ fn parse_args(io: std.Io, args: anytype, comptime Args: type) Args {
                 fatal(io, "Unknown positional argument: {s}", .{arg});
             }
 
-            inline for (positional_fields, 0..) |field, idx| {
+            inline for (positional.field_names, positional.field_types, 0..) |name, FieldType, idx| {
                 if (counts.positional == idx) {
-                    @field(result.positional, field.name) = argx.parse_value(io, field.type, field.name, arg);
+                    @field(result.positional, name) = argx.parse_value(io, FieldType, name, arg);
 
                     counts.positional += 1;
 
-                    if (counts.positional == positional_fields.len) {
+                    if (counts.positional == positional.field_names.len) {
                         parsed_positional = true;
                     }
 
@@ -265,15 +266,17 @@ fn parse_args(io: std.Io, args: anytype, comptime Args: type) Args {
         // with a dash.
         const arg_name_cli = argx.name(arg);
 
-        inline for (fields[0..field_count]) |field| {
-            const arg_name_app = comptime strings.replace(field.name, "_", "-");
+        inline for (fields[0..field_count]) |index| {
+            const name = info.field_names[index];
+            const FieldType = info.field_types[index];
+            const arg_name_app = comptime strings.replace(name, "_", "-");
 
             if (strings.eql(arg_name_app, arg_name_cli)) {
-                if (@field(counts, field.name) != 0) fatal(io, "{s}: duplicate argument", .{field.name});
-                @field(counts, field.name) = 1;
+                if (@field(counts, name) != 0) fatal(io, "{s}: duplicate argument", .{name});
+                @field(counts, name) = 1;
 
-                const value = parse_option(io, field.type, arg, args);
-                @field(result, field.name) = value;
+                const value = parse_option(io, FieldType, arg, args);
+                @field(result, name) = value;
 
                 continue :next_arg;
             }
@@ -282,16 +285,16 @@ fn parse_args(io: std.Io, args: anytype, comptime Args: type) Args {
         if (@hasDecl(Args, "aliases")) {
             const aliases = comptime Args.aliases;
 
-            inline for (std.meta.fields(@TypeOf(aliases))) |field| {
-                const alias = @field(aliases, field.name);
+            inline for (@typeInfo(@TypeOf(aliases)).@"struct".field_names) |name| {
+                const alias = @field(aliases, name);
 
                 if (strings.eql(alias, arg_name_cli)) {
-                    if (@field(counts, field.name) != 0) fatal(io, "{s}: duplicate argument", .{field.name});
-                    @field(counts, field.name) = 1;
-                    const field_type = @TypeOf(@field(result, field.name));
+                    if (@field(counts, name) != 0) fatal(io, "{s}: duplicate argument", .{name});
+                    @field(counts, name) = 1;
+                    const field_type = @TypeOf(@field(result, name));
 
                     const value = parse_option(io, field_type, arg, args);
-                    @field(result, field.name) = value;
+                    @field(result, name) = value;
 
                     continue :next_arg;
                 }
@@ -302,26 +305,28 @@ fn parse_args(io: std.Io, args: anytype, comptime Args: type) Args {
         fatal(io, "Unknown CLI argument: {s}\n", .{arg});
     }
 
-    inline for (fields[0..field_count]) |field| {
-        switch (@field(counts, field.name)) {
-            0 => if (structs.default_value(field)) |default| {
-                @field(result, field.name) = default;
+    inline for (fields[0..field_count]) |index| {
+        const name = info.field_names[index];
+        const FieldType = info.field_types[index];
+        switch (@field(counts, name)) {
+            0 => if (info.field_attrs[index].defaultValue(FieldType)) |default| {
+                @field(result, name) = default;
             } else {
-                fatal(io, "{s}: argument is required", .{field.name});
+                fatal(io, "{s}: argument is required", .{name});
             },
             1 => {},
-            else => fatal(io, "{s}: duplicate argument", .{field.name}),
+            else => fatal(io, "{s}: duplicate argument", .{name}),
         }
     }
 
     if (@hasField(Args, "positional")) {
-        assert(counts.positional <= positional_fields.len);
-        inline for (positional_fields, 0..) |field, idx| {
+        assert(counts.positional <= positional.field_names.len);
+        inline for (positional.field_names, positional.field_types, positional.field_attrs, 0..) |name, FieldType, attrs, idx| {
             if (idx >= counts.positional) {
-                if (field.default_value_ptr != null) {
-                    @field(result.positional, field.name) = field.defaultValue().?;
+                if (attrs.defaultValue(FieldType)) |default| {
+                    @field(result.positional, name) = default;
                 } else {
-                    fatal(io, "{s}: argument is required", .{field.name});
+                    fatal(io, "{s}: argument is required", .{name});
                 }
             }
         }
@@ -419,6 +424,32 @@ test "subcommands fill optional positional defaults" {
     try std.testing.expectEqualStrings("item", result.list_items.positional.first);
     try std.testing.expectEqual(@as(?[]const u8, null), result.list_items.positional.second);
     try std.testing.expectEqual(@as(u8, 7), result.list_items.positional.third);
+}
+
+test "positional metadata preserves later options and nonnull optional defaults" {
+    const Options = struct {
+        before: u8 = 11,
+        positional: struct {
+            first: []const u8,
+            second: ?[:0]const u8 = "fallback",
+        },
+        after: u16 = 42,
+        pub const aliases = .{ .after = "a" };
+    };
+    var args: SliceIterator = .{ .values = &.{ "app", "item", "-a", "99" } };
+    const defaults = parse_iterator(std.testing.io, &args, Options);
+    try std.testing.expectEqual(@as(u8, 11), defaults.before);
+    try std.testing.expectEqual(@as(u16, 99), defaults.after);
+    try std.testing.expectEqualStrings("item", defaults.positional.first);
+    try std.testing.expectEqualStrings("fallback", defaults.positional.second.?);
+    try std.testing.expectEqual(@as(u8, 0), defaults.positional.second.?[defaults.positional.second.?.len]);
+
+    var supplied: SliceIterator = .{ .values = &.{ "app", "--before=7", "item", "", "--after=100" } };
+    const explicit = parse_iterator(std.testing.io, &supplied, Options);
+    try std.testing.expectEqual(@as(u8, 7), explicit.before);
+    try std.testing.expectEqual(@as(u16, 100), explicit.after);
+    try std.testing.expectEqualStrings("", explicit.positional.second.?);
+    try std.testing.expectEqual(@as(u8, 0), explicit.positional.second.?[0]);
 }
 
 fn test_process_args() std.process.Args {

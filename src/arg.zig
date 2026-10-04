@@ -15,8 +15,8 @@ pub fn assert_valid_value_type(comptime T: type) void {
 
         if (@typeInfo(T) == .@"enum") {
             const info = @typeInfo(T).@"enum";
-            assert(info.is_exhaustive);
-            assert(info.fields.len >= 2);
+            assert(info.mode == .exhaustive);
+            assert(info.field_names.len >= 2);
             return;
         }
 
@@ -162,7 +162,7 @@ test parse_value_int {
 /// assert(parse_value_enum(E, "test-enum", "not_ok"), .not_ok);
 /// ```
 fn parse_value_enum(io: std.Io, comptime E: type, arg_name: []const u8, val: []const u8) E {
-    comptime assert(@typeInfo(E).@"enum".is_exhaustive);
+    comptime assert(@typeInfo(E).@"enum".mode == .exhaustive);
 
     return std.meta.stringToEnum(E, val) orelse fatal(
         io,

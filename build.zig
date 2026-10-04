@@ -26,7 +26,7 @@ pub fn build(b: *std.Build) void {
     check.dependOn(&main_tests.step);
     const verify = b.step("verify", "Run tests, compile examples and check formatting");
     verify.dependOn(test_step);
-    verify.dependOn(&b.addFmt(.{ .paths = &.{ "build.zig", "build.zig.zon", "src", "example" }, .check = true }).step);
+    verify.dependOn(&b.addFmt(.{ .paths = b.pathList(&.{ "build.zig", "build.zig.zon", "src", "example" }), .check = true }).step);
 
     const fixture = b.addExecutable(.{
         .name = "zli-parser-fixture",
@@ -39,7 +39,7 @@ pub fn build(b: *std.Build) void {
     });
     check.dependOn(&fixture.step);
     const process_tests = b.addSystemCommand(&.{ "python3", "tests/cli.py" });
-    process_tests.addArtifactArg(fixture);
+    process_tests.addArtifactArg2(fixture, .{});
     verify.dependOn(&process_tests.step);
 
     const examples_step = b.step("examples", "Build and install all examples");

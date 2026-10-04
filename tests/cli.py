@@ -63,6 +63,8 @@ def main():
     success("attached end marker can be a named value", ["values", "--text=--"], {"text": "--"})
     success("void subcommand", ["empty"], {})
     success("required value", ["required", "--number", "255"], {"number": 255})
+    success("positional defaults preserve later aliased options", ["positional-defaults", "item", "-a", "99"], {"before": 11, "after": 99, "positional": {"first": "item", "second": "fallback"}})
+    success("supplied positionals override nonnull sentinel defaults", ["positional-defaults", "--before=7", "item", "", "--after=100"], {"before": 7, "after": 100, "positional": {"first": "item", "second": ""}})
 
     for token in ("--help", "-h", "help"):
         for scope, expected_help in (([], "GLOBAL HELP\n"), (["values"], "VALUES HELP\n")):
@@ -88,6 +90,7 @@ def main():
     error("empty boolean", ["values", "--verbose="], "expected true or false")
     error("duplicate alias", ["values", "--port=1", "-p", "2"], "duplicate argument")
     error("required argument missing", ["required"], "argument is required")
+    error("required positional before default remains required", ["positional-defaults"], "first: argument is required")
     error("extra positional", ["values", "one", "two", "three"], "Unknown positional argument")
     error("void subcommand rejects arguments", ["empty", "surplus"], "unexpected argument")
 

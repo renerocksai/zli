@@ -56,9 +56,9 @@ fantastic projects from the Zig community:
 -   [prajwalch/yazap](https://github.com/prajwalch/yazap) - The ultimate Zig library for seamless command line parsing. Effortlessly handles options, subcommands, and custom arguments with ease.
 -   [MasterQ32/zig-args](https://github.com/MasterQ32/zig-args) - Simple-to-use argument parser with struct-based config
 
-## Zig 0.16.0 and process initialization
+## Zig 0.17.0 and process initialization
 
-Use exact [Zig 0.16.0](https://ziglang.org/download/). The convenient entry point
+Use exact [Zig 0.17.0](https://ziglang.org/download/). The convenient entry point
 accepts the `std.process.Init` supplied to main:
 
 ```zig
@@ -124,7 +124,7 @@ struct; it is not generated from field metadata.
 
 ## Installing
 
-Pin a commit of this [Zig 0.16 fork](https://github.com/renerocksai/zli) with
+Pin a commit of this [Zig 0.17 fork](https://github.com/renerocksai/zli) with
 `zig fetch --save=zli` and its archive URL. Add the dependency module to your
 executable in `build.zig`:
 
@@ -145,8 +145,8 @@ exe.root_module.addImport("zli", zli.module("zli"));
 All use `pub fn main(init: std.process.Init) !void` and `try zli.parseInit`.
 
 ```sh
-zig build verify -Doptimize=Debug
-zig build verify -Doptimize=ReleaseSafe
+zig build verify -Doptimize=debug
+zig build verify -Doptimize=safe
 ./zig-out/bin/simple example --foo 42 --opt
 ./zig-out/bin/simple --help
 ```
